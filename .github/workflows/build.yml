@@ -11,99 +11,197 @@ permissions:
 
 jobs:
   build:
+    name: Build Android Game
     runs-on: ubuntu-22.04
 
+    container:
+      image: barichello/godot-ci:4.3
+
+    env:
+      GODOT_VERSION: "4.3"
+      APK_PATH: build/CityDrive3D.apk
+      ANDROID_HOME: /usr/lib/android-sdk
+
     steps:
-      - name: Download project
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Check Godot and Java
+        shell: bash
         run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
-
-      - name: Download Godot 4.3
-        run: |
-          wget -q \
-            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip \
-            -O godot.zip
-
-          unzip -q godot.zip
-          chmod +x Godot_v4.3-stable_linux.x86_64
-          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
-
+          set -e
           godot --version
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME"
 
-      - name: Install Godot Android export templates
+      - name: Configure Godot templates
+        shell: bash
         run: |
-          mkdir -p "$HOME/.local/share/godot/export_templates/4.3.stable"
+          set -e
 
-          wget -q \
-            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz \
-            -O templates.tpz
-
-          mkdir templates
-          unzip -q templates.tpz -d templates
-
-          cp templates/templates/android_debug.apk \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
-
-          cp templates/templates/android_release.apk \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
-
-          cp templates/templates/android_source.zip \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
-
-          ls -lh "$HOME/.local/share/godot/export_templates/4.3.stable/"
-
-      - name: Configure Android export
-        run: |
+          mkdir -p "$HOME/.local/share/godot/export_templates"
           mkdir -p "$HOME/.config/godot"
           mkdir -p build
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+
+          if [ ! -d "$TEMPLATE_DIR" ]; then
+            if [ -d "/root/.local/share/godot/export_templates/4.3.stable" ]; then
+              cp -a \
+                /root/.local/share/godot/export_templates/4.3.stable \
+                "$TEMPLATE_DIR"
+            fi
+          fi
+
+          if [ ! -f "$TEMPLATE_DIR/android_source.zip" ]; then
+            echo "ERROR: Android export template is missing."
+            echo "Expected: $TEMPLATE_DIR/android_source.zip"
+            find /root/.local/share/godot "$HOME/.local/share/godot" \
+              -name android_source.zip -print 2>/dev/null || true
+            exit 1
+          fi
+
+          if [ ! -f "$TEMPLATE_DIR/android_debug.apk" ]; then
+            echo "ERROR: android_debug.apk is missing."
+            exit 1
+          fi
+
+          if [ ! -f "$TEMPLATE_DIR/android_release.apk" ]; then
+            echo "ERROR: android_release.apk is missing."
+            exit 1
+          fi
+
+          echo "Android templates found."
+
+      - name: Locate Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          SDK=""
+
+          for path in \
+            "$ANDROID_HOME" \
+            "$ANDROID_SDK_ROOT" \
+            "/opt/android-sdk" \
+            "/usr/local/lib/android/sdk" \
+            "/root/.android/sdk"
+          do
+            if [ -n "$path" ] && [ -d "$path/platform-tools" ]; then
+              SDK="$path"
+              break
+            fi
+          done
+
+          if [ -z "$SDK" ]; then
+            echo "ERROR: Android SDK was not found."
+            find /usr/lib /opt /root -type f -name adb \
+              2>/dev/null | head -20 || true
+            exit 1
+          fi
+
+          echo "ANDROID_SDK_PATH=$SDK" >> "$GITHUB_ENV"
+          echo "Android SDK found: $SDK"
+
+      - name: Configure Java and Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p "$HOME/.config/godot"
 
           cat > "$HOME/.config/godot/editor_settings-4.3.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
           export/android/java_sdk_path = "$JAVA_HOME"
-          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/android_sdk_path = "$ANDROID_SDK_PATH"
           EOF
 
+      - name: Check export preset
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f project.godot ]; then
+            echo "ERROR: project.godot was not found."
+            exit 1
+          fi
+
+          if [ ! -f export_presets.cfg ]; then
+            echo "ERROR: export_presets.cfg was not found."
+            exit 1
+          fi
+
+          grep -q 'name="Android"' export_presets.cfg || {
+            echo 'ERROR: Export preset "Android" was not found.'
+            exit 1
+          }
+
+          echo "Project and Android preset found."
+
       - name: Create debug signing key
+        shell: bash
         run: |
-          keytool -genkeypair \
-            -keystore "$HOME/.android/debug.keystore" \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          set -e
 
-      - name: Validate project
-        run: |
-          godot --headless --path . --editor --quit
+          mkdir -p "$HOME/.android"
 
-      - name: Build APK
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          echo "Debug signing key is ready."
+
+      - name: Import Godot project
+        shell: bash
         run: |
+          set -e
+          godot --headless --path . --editor --import --quit
+
+      - name: Export APK
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build
+
           godot --headless \
             --path . \
+            --verbose \
             --export-debug "Android" \
-            build/CityDrive3D.apk
+            "$APK_PATH"
 
-          test -f build/CityDrive3D.apk
+          if [ ! -s "$APK_PATH" ]; then
+            echo "ERROR: APK was not created."
+            exit 1
+          fi
+
+          echo "APK created successfully."
+          ls -lh "$APK_PATH"
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          file "$APK_PATH"
+
+          if ! unzip -t "$APK_PATH" >/dev/null; then
+            echo "ERROR: APK file is invalid."
+            exit 1
+          fi
+
+          echo "APK verification passed."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -111,3 +209,4 @@ jobs:
           name: CityDrive3D-APK
           path: build/CityDrive3D.apk
           if-no-files-found: error
+          retention-days: 7
