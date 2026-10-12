@@ -1,0 +1,43 @@
+name: Build CityDrive3D APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      image: barichello/godot-ci:4.3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Godot
+        run: godot --version
+
+      - name: Prepare project
+        run: |
+          mkdir -p build
+          godot --headless --path . --editor --quit
+
+      - name: Export Android APK
+        run: |
+          godot --headless \
+            --path . \
+            --export-debug "Android" \
+            build/CityDrive3D.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CityDrive3D-APK
+          path: build/CityDrive3D.apk
+          if-no-files-found: error
