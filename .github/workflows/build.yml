@@ -11,13 +11,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install Java 17
+      - name: Install Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,67 +26,40 @@ jobs:
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android Build Tools
+      - name: Install Android tools
         run: |
-          sdkmanager "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
+          sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
-      - name: Download Godot 4.3
+      - name: Download Godot
         run: |
-          wget -q \
-            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip \
-            -O godot.zip
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip -O godot.zip
           unzip -q godot.zip
           chmod +x Godot_v4.3-stable_linux.x86_64
           sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
 
-      - name: Install Godot export templates
+      - name: Install Godot templates
         run: |
           mkdir -p "$HOME/.local/share/godot/export_templates/4.3.stable"
-          wget -q \
-            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz \
-            -O templates.tpz
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz -O templates.tpz
           mkdir templates
           unzip -q templates.tpz -d templates
-          find templates -type f
-          cp templates/templates/android_debug.apk \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
-          cp templates/templates/android_release.apk \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
-          cp templates/templates/android_source.zip \
-            "$HOME/.local/share/godot/export_templates/4.3.stable/"
+          cp templates/templates/android_debug.apk "$HOME/.local/share/godot/export_templates/4.3.stable/"
+          cp templates/templates/android_release.apk "$HOME/.local/share/godot/export_templates/4.3.stable/"
+          cp templates/templates/android_source.zip "$HOME/.local/share/godot/export_templates/4.3.stable/"
 
-      - name: Configure Android environment
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          godot --headless --version
-
-      - name: Prepare debug keystore
+      - name: Configure Android
         run: |
           mkdir -p "$HOME/.android"
-          keytool -genkeypair \
-            -keystore "$HOME/.android/debug.keystore" \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US" \
-            -keyalg RSA \
-            -validity 10000 \
-            -noprompt
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -validity 10000 -noprompt
 
       - name: Prepare project
         run: |
           mkdir -p build
           godot --headless --path . --editor --quit
 
-      - name: Export Android APK
+      - name: Export APK
         run: |
-          godot --headless \
-            --path . \
-            --export-debug "Android" \
-            build/CityDrive3D.apk
+          godot --headless --path . --export-debug "Android" build/CityDrive3D.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
